@@ -4,6 +4,8 @@ using System.IO;
 using System.Linq;
 using System.Net;
 using System.Net.Mail;
+using System.Net.Security;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -11,6 +13,7 @@ namespace FTP_Upload
 {
     class Program
     {
+        
         static int Main(string[] args)
         {
             // file / host / port / user / pass / mail
@@ -43,7 +46,7 @@ namespace FTP_Upload
             }
             return 0;
         }
-        
+
 
         private static void RunErrorMailSend(string message, string mail, string source)
         {
@@ -66,34 +69,57 @@ namespace FTP_Upload
         public static void UploadSFTPFile(string host, string username,
                                           string password, string sourcefile, string destinationpath, int port, string fileName, string mail)
         {
-            FtpWebRequest request = (FtpWebRequest)WebRequest.Create(host + @"/" + fileName);
-            request.EnableSsl = true;
-            request.Method = WebRequestMethods.Ftp.UploadFile;
-            request.Credentials = new NetworkCredential(username, password);
-
-
-            Stream requestStream = request.GetRequestStream();
-            FileStream fileStream = File.Open(sourcefile, FileMode.Open);
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-            while (true)
+            RemoteCertificateValidationCallback orgCallback = ServicePointManager.ServerCertificateValidationCallback;
+            try
             {
-                bytesRead = fileStream.Read(buffer, 0, buffer.Length);
-                if (bytesRead == 0)
-                    break;
-                requestStream.Write(buffer, 0, bytesRead);
+                // This statement is to ignore certification validation warning
+                ServicePointManager.ServerCertificateValidationCallback = new RemoteCertificateValidationCallback(OnValidateCertificate);
+                ServicePointManager.Expect100Continue = true;
+
+
+                // Connect to the server and do what ever you want here
+
+
+
+                FtpWebRequest request = (FtpWebRequest)WebRequest.Create(host + @"/" + fileName);
+                request.EnableSsl = true;
+                request.Method = WebRequestMethods.Ftp.UploadFile;
+                request.Credentials = new NetworkCredential(username, password);
+
+
+
+                Stream requestStream = request.GetRequestStream();
+                FileStream fileStream = File.Open(sourcefile, FileMode.Open);
+                byte[] buffer = new byte[1024];
+                int bytesRead;
+                while (true)
+                {
+                    bytesRead = fileStream.Read(buffer, 0, buffer.Length);
+                    if (bytesRead == 0)
+                        break;
+                    requestStream.Write(buffer, 0, bytesRead);
+                }
+                //The request stream must be closed before getting
+                //the response.
+                requestStream.Close();
+
+                FtpWebResponse response = (FtpWebResponse)request.GetResponse();
+
+                if (response.StatusCode != FtpStatusCode.ClosingData)
+                {
+                    RunErrorMailSend(response.StatusDescription, mail, sourcefile);
+                }
+                Console.WriteLine($"Server responded: {response.StatusDescription}");
+                bool OnValidateCertificate(object sender, X509Certificate certificate, X509Chain chain, SslPolicyErrors sslPolicyErrors)
+                {
+                    return true;
+                }
             }
-            //The request stream must be closed before getting
-            //the response.
-            requestStream.Close();
-
-            FtpWebResponse response = (FtpWebResponse)request.GetResponse();
-
-            if (response.StatusCode != FtpStatusCode.ClosingData)
+            finally
             {
-                RunErrorMailSend(response.StatusDescription, mail, sourcefile);
+                ServicePointManager.ServerCertificateValidationCallback = orgCallback;
             }
-            Console.WriteLine($"Server responded: {response.StatusDescription}");
         }
+        
     }
 }
